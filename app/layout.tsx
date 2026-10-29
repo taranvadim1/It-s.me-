@@ -13,9 +13,8 @@ const roboto = Roboto({
 })
 
 export const metadata: Metadata = {
-  title: "itsme.app - Цифровая визитница",
-  description: "Создайте свою уникальную визитку и представьте себя миру",
-    generator: 'v0.dev'
+  title: "it’s.me — Карта человечества",
+  description: "Ваш цифровой центр: один профиль, который всегда можно найти.",
 }
 
 export default function RootLayout({

@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, ExternalLink, MessageSquare, UserPlus, UserCheck } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { addFriend, removeFriend, isFriend } from "@/lib/friends-store"
+import { getUserByUsername, type AppUser } from "@/lib/auth-store"
 
 interface UserProfileProps {
   username: string
@@ -13,55 +14,32 @@ interface UserProfileProps {
 
 export function UserProfile({ username, onBack }: UserProfileProps) {
   const router = useRouter()
+  const [userData, setUserData] = useState<AppUser | null>(null)
   const [isFriendState, setIsFriendState] = useState(false)
 
-  // Проверяем, является ли пользователь другом при загрузке компонента
   useEffect(() => {
+    setUserData(getUserByUsername(username))
     setIsFriendState(isFriend(username))
   }, [username])
 
-  // Имитация данных пользователя
-  const userData = {
-    name:
-      username === "john_doe"
-        ? "Джон Доу"
-        : username === "jane_smith"
-          ? "Джейн Смит"
-          : username === "alex_dev"
-            ? "Алекс Разработчик"
-            : username === "maria_design"
-              ? "Мария Дизайнер"
-              : username === "tech_guru"
-                ? "Технический Гуру"
-                : username
-                    .split("_")
-                    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                    .join(" "),
-    description:
-      "Фрилансер, специализирующийся на веб-разработке и дизайне. Создаю красивые и функциональные сайты для малого и среднего бизнеса.",
-    links: [
-      { title: "Портфолио", url: "https://portfolio.example.com" },
-      { title: "GitHub", url: "https://github.com/example" },
-      { title: "LinkedIn", url: "https://linkedin.com/in/example" },
-    ],
-  }
-
-  const handleMessageClick = () => {
-    router.push(`/chat/${username}`)
+  if (!userData) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 p-8">
+        <h2 className="text-xl font-semibold">Пользователь не найден</h2>
+        <Button onClick={onBack}>Вернуться к карте</Button>
+      </div>
+    )
   }
 
   const handleFriendClick = () => {
-    if (isFriendState) {
-      removeFriend(username)
-    } else {
-      addFriend(username, userData.name)
-    }
+    if (isFriendState) removeFriend(username)
+    else addFriend(username, userData.name)
     setIsFriendState(!isFriendState)
   }
 
   return (
     <div className="flex flex-col h-full">
-      <div className="sticky top-0 bg-white z-10 p-4 flex items-center">
+      <div className="sticky top-0 bg-white z-10 p-4 flex items-center border-b">
         <Button variant="ghost" size="icon" onClick={onBack}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
@@ -69,61 +47,36 @@ export function UserProfile({ username, onBack }: UserProfileProps) {
       </div>
 
       <div className="flex-1 p-4 flex flex-col items-center">
-        <div className="w-[200px] h-[200px] rounded-full overflow-hidden mb-4">
-          <img
-            src={`/placeholder.svg?height=200&width=200&text=${username.charAt(0).toUpperCase()}`}
-            alt={userData.name}
-            className="w-full h-full object-cover"
-          />
+        <div className="w-[140px] h-[140px] rounded-full bg-gradient-to-br from-pink-300 to-purple-400 flex items-center justify-center mb-4 text-5xl font-bold text-white">
+          {userData.name.charAt(0).toUpperCase()}
         </div>
+        <h2 className="text-[24px] font-medium mb-1">{userData.name}</h2>
+        <p className="text-sm text-muted-foreground mb-3">@{userData.username}</p>
+        <p className="text-[16px] text-muted-foreground text-center mb-6 max-w-md">{userData.description}</p>
 
-        <h2 className="font-roboto text-[24px] text-black font-medium mb-2">{userData.name}</h2>
-
-        <p className="font-roboto text-[16px] text-[#666666] text-center mb-6 max-w-md">{userData.description}</p>
-
-        <div className="w-full max-w-md space-y-3 mb-6">
-          <div className="flex flex-wrap justify-center gap-4">
-            {userData.links.map((link, index) => (
-              <a
-                key={index}
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex flex-col items-center justify-center bg-[#007BFF] text-white rounded-full w-20 h-20 p-2 transition-transform hover:scale-105"
-              >
-                <ExternalLink className="h-5 w-5 mb-1" />
-                <span className="text-xs text-center">{link.title}</span>
-              </a>
-            ))}
+        {userData.links.length > 0 && (
+          <div className="w-full max-w-md space-y-3 mb-6">
+            <div className="flex flex-wrap justify-center gap-3">
+              {userData.links.map((link, index) => (
+                <a key={index} href={link.url} target="_blank" rel="noopener noreferrer"
+                  className="flex flex-col items-center justify-center border rounded-2xl w-24 h-24 p-2 transition-transform hover:scale-105 hover:bg-muted">
+                  <ExternalLink className="h-5 w-5 mb-1" />
+                  <span className="text-xs text-center truncate max-w-full">{link.title}</span>
+                </a>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="w-full max-w-md flex flex-col gap-3">
-          <Button
-            className={
-              isFriendState ? "bg-blue-100 text-blue-700 hover:bg-blue-200" : "bg-blue-500 hover:bg-blue-600 text-white"
-            }
-            onClick={handleFriendClick}
-          >
-            {isFriendState ? (
-              <>
-                <UserCheck className="mr-2 h-4 w-4" />В друзьях
-              </>
-            ) : (
-              <>
-                <UserPlus className="mr-2 h-4 w-4" />
-                Добавить в друзья
-              </>
-            )}
+          <Button variant={isFriendState ? "secondary" : "default"} onClick={handleFriendClick}>
+            {isFriendState ? <><UserCheck className="mr-2 h-4 w-4" />В друзьях</> : <><UserPlus className="mr-2 h-4 w-4" />Добавить в друзья</>}
           </Button>
-
-          <Button className="bg-[#28A745] hover:bg-[#218838] text-white" onClick={handleMessageClick}>
-            <MessageSquare className="mr-2 h-4 w-4" />
-            Написать сообщение
+          <Button onClick={() => router.push(`/chat/${username}`)}>
+            <MessageSquare className="mr-2 h-4 w-4" />Написать сообщение
           </Button>
         </div>
       </div>
     </div>
   )
 }
-
