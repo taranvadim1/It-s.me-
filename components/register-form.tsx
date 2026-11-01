@@ -11,7 +11,6 @@ import { createClient } from "@/lib/supabase/client"
 
 export function RegisterForm() {
   const router = useRouter()
-  const supabase = createClient()
 
   const [email, setEmail] = useState("")
   const [username, setUsername] = useState("")
@@ -35,34 +34,30 @@ export function RegisterForm() {
     }
 
     if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-      setError("Никнейм: только латинские буквы, цифры и _")
+      setError("Никнейм может содержать только латинские буквы, цифры и _")
       return
     }
 
     setLoading(true)
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
+    const supabase = createClient()
+
+    const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           username,
           name: username,
+          description: "Мой профиль на it's.me",
         },
       },
     })
 
-    if (signUpError) {
-      setError(signUpError.message)
-      setLoading(false)
-      return
-    }
+    setLoading(false)
 
-    if (!data.session) {
-      setError(
-        "Регистрация создана. Проверьте почту и подтвердите email, затем войдите в аккаунт."
-      )
-      setLoading(false)
+    if (error) {
+      setError(error.message)
       return
     }
 
@@ -72,7 +67,7 @@ export function RegisterForm() {
   return (
     <div className="w-full max-w-md space-y-6">
       <div className="text-center">
-        <h1 className="text-3xl font-bold">it’s.me</h1>
+        <h1 className="text-3xl font-bold">it's.me</h1>
         <p className="text-muted-foreground mt-2">
           Создайте свою цифровую визитку
         </p>
@@ -122,13 +117,11 @@ export function RegisterForm() {
         </div>
 
         {error && (
-          <p className="text-sm text-red-500">
-            {error}
-          </p>
+          <p className="text-sm text-red-500">{error}</p>
         )}
 
         <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Создание профиля..." : "Создать профиль"}
+          {loading ? "Создание..." : "Создать профиль"}
         </Button>
       </form>
 
