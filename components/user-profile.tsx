@@ -10,16 +10,18 @@ import {
   UserCheck,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { addFriend, removeFriend, isFriend } from "@/lib/friends-store"
 import { createClient } from "@/lib/supabase/client"
 
 interface Profile {
+  id: string
   username: string
   name: string
   description: string | null
   avatar: string | null
   links: { title: string; url: string }[] | null
 }
+
+type FriendStatus = "none" | "pending" | "accepted"
 
 interface UserProfileProps {
   username: string
@@ -28,30 +30,68 @@ interface UserProfileProps {
 
 export function UserProfile({ username, onBack }: UserProfileProps) {
   const router = useRouter()
+  const supabase = createClient()
 
   const [userData, setUserData] = useState<Profile | null>(null)
-  const [isFriendState, setIsFriendState] = useState(false)
+  const [friendStatus, setFriendStatus] = useState<FriendStatus>("none")
   const [loading, setLoading] = useState(true)
+  const [friendLoading, setFriendLoading] = useState(false)
 
   useEffect(() => {
     const loadProfile = async () => {
-      const supabase = createClient()
+      setLoading(true)
 
-      const { data, error } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("username, name, description, avatar, links")
+        .select("id, username, name, description, avatar, links")
         .eq("username", username)
         .maybeSingle()
 
-      if (error) {
-        console.error("Ошибка загрузки профиля:", error)
-        alert(`Ошибка загрузки профиля: ${error.message}`)
+      if (profileError) {
+        console.error("Ошибка загрузки профиля:", profileError)
+        alert(`Ошибка загрузки профиля: ${profileError.message}`)
         setUserData(null)
-      } else {
-        setUserData(data as Profile | null)
+        setLoading(false)
+        return
       }
 
-      setIsFriendState(isFriend(username))
+      if (!profile) {
+        setUserData(null)
+        setLoading(false)
+        return
+      }
+
+      setUserData(profile as Profile)
+
+      const {
+        data: { user: currentUser },
+      } = await supabase.auth.getUser()
+
+      if (!currentUser || currentUser.id === profile.id) {
+        setFriendStatus("none")
+        setLoading(false)
+        return
+      }
+
+      const { data: friendship, error: friendshipError } = await supabase
+        .from("friendships")
+        .select("id, requester_id, addressee_id, status")
+        .or(
+          `and(requester_id.eq.${currentUser.id},addressee_id.eq.${profile.id}),and(requester_id.eq.${profile.id},addressee_id.eq.${currentUser.id})`
+        )
+        .maybeSingle()
+
+      if (friendshipError) {
+        console.error("Ошибка загрузки связи:", friendshipError)
+        setFriendStatus("none")
+      } else if (friendship?.status === "accepted") {
+        setFriendStatus("accepted")
+      } else if (friendship?.status === "pending") {
+        setFriendStatus("pending")
+      } else {
+        setFriendStatus("none")
+      }
+
       setLoading(false)
     }
 
@@ -75,14 +115,54 @@ export function UserProfile({ username, onBack }: UserProfileProps) {
     )
   }
 
-  const handleFriendClick = () => {
-    if (isFriendState) {
-      removeFriend(username)
-    } else {
-      addFriend(username, userData.name)
+  const handleFriendClick = async () => {
+    setFriendLoading(true)
+
+    const {
+      data: { user: currentUser },
+    } = await supabase.auth.getUser()
+
+    if (!currentUser) {
+      alert("Для добавления в друзья необходимо войти в аккаунт.")
+      setFriendLoading(false)
+      return
     }
 
-    setIsFriendState(!isFriendState)
+    if (currentUser.id === userData.id) {
+      setFriendLoading(false)
+      return
+    }
+
+    if (friendStatus === "none") {
+      const { error } = await supabase.from("friendships").insert({
+        requester_id: currentUser.id,
+        addressee_id: userData.id,
+        status: "pending",
+      })
+
+      if (error) {
+        console.error("Ошибка отправки запроса:", error)
+        alert(`Не удалось отправить запрос: ${error.message}`)
+      } else {
+        setFriendStatus("pending")
+      }
+    } else {
+      const { error } = await supabase
+        .from("friendships")
+        .delete()
+        .or(
+          `and(requester_id.eq.${currentUser.id},addressee_id.eq.${userData.id}),and(requester_id.eq.${userData.id},addressee_id.eq.${currentUser.id})`
+        )
+
+      if (error) {
+        console.error("Ошибка удаления связи:", error)
+        alert(`Не удалось удалить связь: ${error.message}`)
+      } else {
+        setFriendStatus("none")
+      }
+    }
+
+    setFriendLoading(false)
   }
 
   const links = userData.links ?? []
@@ -145,13 +225,19 @@ export function UserProfile({ username, onBack }: UserProfileProps) {
 
         <div className="w-full max-w-md flex flex-col gap-3">
           <Button
-            variant={isFriendState ? "secondary" : "default"}
+            variant={friendStatus === "accepted" ? "secondary" : "default"}
             onClick={handleFriendClick}
+            disabled={friendLoading}
           >
-            {isFriendState ? (
+            {friendStatus === "accepted" ? (
               <>
                 <UserCheck className="mr-2 h-4 w-4" />
                 В друзьях
+              </>
+            ) : friendStatus === "pending" ? (
+              <>
+                <UserCheck className="mr-2 h-4 w-4" />
+                Запрос отправлен
               </>
             ) : (
               <>
