@@ -197,9 +197,18 @@ export function ProfileScreen() {
           Ваш профиль ещё не создан
         </h1>
 
-        <Button onClick={() => router.push("/auth/register")}>
-          Создать профиль
-        </Button>
+<div className="flex gap-3">
+  <Button onClick={() => router.push("/auth/register")}>
+    Создать профиль
+  </Button>
+
+  <Button
+    variant="outline"
+    onClick={() => router.push("/auth/login")}
+  >
+    Войти
+  </Button>
+</div>
       </div>
     )
   }
