@@ -26,9 +26,10 @@ export function GridScreen() {
         .order("created_at", { ascending: true })
 
       if (error) {
-        console.error("Ошибка загрузки профилей:", error)
-        setUsers([])
-      } else {
+  console.error("Ошибка загрузки профилей:", error)
+  setUsers([])
+  alert(`Ошибка загрузки профилей: ${error.message}`)
+} else {
         setUsers(
           (data as Profile[] | null)?.map((profile) => profile.username) ?? []
         )
