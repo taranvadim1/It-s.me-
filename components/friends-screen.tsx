@@ -1,77 +1,221 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Search, UserX } from "lucide-react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { useRouter } from "next/navigation"
-import {
-  getAllFriends,
-  getAllFriendRequests,
-  removeFriend,
-  acceptFriendRequest,
-  rejectFriendRequest,
-  type Friend,
-  type FriendRequest,
-} from "@/lib/friends-store"
+import { createClient } from "@/lib/supabase/client"
+
+interface Profile {
+  id: string
+  username: string
+  name: string
+  avatar: string | null
+}
+
+interface Friendship {
+  id: string
+  requester_id: string
+  addressee_id: string
+  status: "pending" | "accepted"
+  created_at: string
+}
+
+interface FriendItem {
+  friendshipId: string
+  userId: string
+  username: string
+  name: string
+  avatar: string | null
+}
+
+interface FriendRequest extends FriendItem {
+  createdAt: string
+}
 
 export function FriendsScreen() {
   const router = useRouter()
+  const supabase = createClient()
+
   const [searchQuery, setSearchQuery] = useState("")
-  const [friends, setFriends] = useState<Friend[]>([])
+  const [friends, setFriends] = useState<FriendItem[]>([])
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([])
+  const [loading, setLoading] = useState(true)
 
-  // Загружаем данные о друзьях при монтировании компонента
+  const loadFriendsData = async () => {
+    setLoading(true)
+
+    const {
+      data: { user: currentUser },
+    } = await supabase.auth.getUser()
+
+    if (!currentUser) {
+      setFriends([])
+      setFriendRequests([])
+      setLoading(false)
+      return
+    }
+
+    const { data: friendships, error: friendshipsError } = await supabase
+      .from("friendships")
+      .select("id, requester_id, addressee_id, status, created_at")
+      .or(
+        `requester_id.eq.${currentUser.id},addressee_id.eq.${currentUser.id}`
+      )
+      .order("created_at", { ascending: false })
+
+    if (friendshipsError) {
+      console.error("Ошибка загрузки друзей:", friendshipsError)
+      alert(`Ошибка загрузки друзей: ${friendshipsError.message}`)
+      setFriends([])
+      setFriendRequests([])
+      setLoading(false)
+      return
+    }
+
+    const friendshipRows = (friendships ?? []) as Friendship[]
+
+    const userIds = Array.from(
+      new Set(
+        friendshipRows.flatMap((friendship) => [
+          friendship.requester_id,
+          friendship.addressee_id,
+        ])
+      )
+    ).filter((id) => id !== currentUser.id)
+
+    if (userIds.length === 0) {
+      setFriends([])
+      setFriendRequests([])
+      setLoading(false)
+      return
+    }
+
+    const { data: profiles, error: profilesError } = await supabase
+      .from("profiles")
+      .select("id, username, name, avatar")
+      .in("id", userIds)
+
+    if (profilesError) {
+      console.error("Ошибка загрузки профилей друзей:", profilesError)
+      alert(`Ошибка загрузки профилей друзей: ${profilesError.message}`)
+      setFriends([])
+      setFriendRequests([])
+      setLoading(false)
+      return
+    }
+
+    const profileMap = new Map(
+      ((profiles ?? []) as Profile[]).map((profile) => [
+        profile.id,
+        profile,
+      ])
+    )
+
+    const acceptedFriends: FriendItem[] = []
+    const incomingRequests: FriendRequest[] = []
+
+    for (const friendship of friendshipRows) {
+      const otherUserId =
+        friendship.requester_id === currentUser.id
+          ? friendship.addressee_id
+          : friendship.requester_id
+
+      const profile = profileMap.get(otherUserId)
+
+      if (!profile) {
+        continue
+      }
+
+      if (friendship.status === "accepted") {
+        acceptedFriends.push({
+          friendshipId: friendship.id,
+          userId: profile.id,
+          username: profile.username,
+          name: profile.name,
+          avatar: profile.avatar,
+        })
+      }
+
+      if (
+        friendship.status === "pending" &&
+        friendship.addressee_id === currentUser.id
+      ) {
+        incomingRequests.push({
+          friendshipId: friendship.id,
+          userId: profile.id,
+          username: profile.username,
+          name: profile.name,
+          avatar: profile.avatar,
+          createdAt: friendship.created_at,
+        })
+      }
+    }
+
+    setFriends(acceptedFriends)
+    setFriendRequests(incomingRequests)
+    setLoading(false)
+  }
+
   useEffect(() => {
-    const loadFriendsData = () => {
-      setFriends(getAllFriends())
-      setFriendRequests(getAllFriendRequests())
-    }
-
     loadFriendsData()
-
-    // Добавляем слушатель события хранилища для обновления данных
-    const handleStorageChange = () => {
-      loadFriendsData()
-    }
-
-    window.addEventListener("storage", handleStorageChange)
-
-    // Устанавливаем интервал для периодического обновления данных
-    const interval = setInterval(loadFriendsData, 2000)
-
-    return () => {
-      window.removeEventListener("storage", handleStorageChange)
-      clearInterval(interval)
-    }
   }, [])
 
   const handleViewProfile = (username: string) => {
-    router.push(`/?username=${username}`)
+    router.push(`/?username=${encodeURIComponent(username)}`)
   }
 
-  const handleRemoveFriend = (username: string) => {
-    removeFriend(username)
-    setFriends(getAllFriends())
+  const handleRemoveFriend = async (friendshipId: string) => {
+    const { error } = await supabase
+      .from("friendships")
+      .delete()
+      .eq("id", friendshipId)
+
+    if (error) {
+      console.error("Ошибка удаления друга:", error)
+      alert(`Не удалось удалить друга: ${error.message}`)
+      return
+    }
+
+    await loadFriendsData()
   }
 
-  const handleAcceptRequest = (username: string) => {
-    acceptFriendRequest(username)
-    setFriends(getAllFriends())
-    setFriendRequests(getAllFriendRequests())
+  const handleAcceptRequest = async (friendshipId: string) => {
+    const { error } = await supabase
+      .from("friendships")
+      .update({ status: "accepted" })
+      .eq("id", friendshipId)
+
+    if (error) {
+      console.error("Ошибка принятия запроса:", error)
+      alert(`Не удалось принять запрос: ${error.message}`)
+      return
+    }
+
+    await loadFriendsData()
   }
 
-  const handleRejectRequest = (username: string) => {
-    rejectFriendRequest(username)
-    setFriendRequests(getAllFriendRequests())
+  const handleRejectRequest = async (friendshipId: string) => {
+    const { error } = await supabase
+      .from("friendships")
+      .delete()
+      .eq("id", friendshipId)
+
+    if (error) {
+      console.error("Ошибка отклонения запроса:", error)
+      alert(`Не удалось отклонить запрос: ${error.message}`)
+      return
+    }
+
+    await loadFriendsData()
   }
 
   const filteredFriends = searchQuery
     ? friends.filter(
         (friend) =>
           friend.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          friend.username.toLowerCase().includes(searchQuery.toLowerCase()),
+          friend.username.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : friends
 
@@ -79,16 +223,26 @@ export function FriendsScreen() {
     ? friendRequests.filter(
         (request) =>
           request.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          request.username.toLowerCase().includes(searchQuery.toLowerCase()),
+          request.username.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : friendRequests
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-muted-foreground p-8">
+        Загружаем друзей...
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 flex flex-col">
       <div className="p-4 sticky top-0 bg-white z-10">
         <h1 className="text-xl font-bold mb-4">Друзья</h1>
+
         <div className="relative">
           <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+
           <Input
             className="pl-9 h-10"
             placeholder="Поиск друзей..."
@@ -98,107 +252,129 @@ export function FriendsScreen() {
         </div>
       </div>
 
-      <Tabs defaultValue="all" className="flex-1">
-        <TabsList className="grid grid-cols-2 mx-4">
-          <TabsTrigger value="all">Все друзья</TabsTrigger>
-          <TabsTrigger value="requests">Запросы ({friendRequests.length})</TabsTrigger>
-        </TabsList>
+      <div className="flex-1">
+        <div className="px-4 pt-2 pb-3">
+          <h2 className="font-semibold">
+            Мои друзья ({filteredFriends.length})
+          </h2>
+        </div>
 
-        <TabsContent value="all" className="flex-1">
-          {filteredFriends.length > 0 ? (
-            <div className="divide-y">
-              {filteredFriends.map((friend) => (
-                <div key={friend.username} className="flex items-center p-4 hover:bg-secondary transition-colors">
-                  <div className="relative">
-                    <div className="w-12 h-12 rounded-full overflow-hidden">
-                      <img
-                        src={`/placeholder.svg?height=48&width=48&text=${friend.username.charAt(0).toUpperCase()}`}
-                        alt={friend.name}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div
-                      className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${friend.status === "online" ? "bg-green-500" : "bg-gray-400"}`}
-                    />
-                  </div>
-
-                  <div className="ml-3 flex-1">
-                    <div className="flex justify-between">
-                      <span className="font-medium">{friend.name}</span>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-primary"
-                          onClick={() => handleViewProfile(friend.username)}
-                        >
-                          <Search className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive"
-                          onClick={() => handleRemoveFriend(friend.username)}
-                        >
-                          <UserX className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground">@{friend.username}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">Друзья не найдены</div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="requests" className="flex-1">
-          {filteredRequests.length > 0 ? (
-            <div className="divide-y">
-              {filteredRequests.map((request) => (
-                <div key={request.username} className="flex items-center p-4 hover:bg-secondary transition-colors">
-                  <div className="w-12 h-12 rounded-full overflow-hidden">
+        {filteredFriends.length > 0 ? (
+          <div className="divide-y">
+            {filteredFriends.map((friend) => (
+              <div
+                key={friend.friendshipId}
+                className="flex items-center p-4 hover:bg-secondary transition-colors"
+              >
+                <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-pink-300 to-purple-400 flex items-center justify-center text-white font-bold">
+                  {friend.avatar ? (
                     <img
-                      src={`/placeholder.svg?height=48&width=48&text=${request.username.charAt(0).toUpperCase()}`}
+                      src={friend.avatar}
+                      alt={friend.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    friend.name.charAt(0).toUpperCase()
+                  )}
+                </div>
+
+                <div className="ml-3 flex-1">
+                  <div className="font-medium">{friend.name}</div>
+                  <p className="text-sm text-muted-foreground">
+                    @{friend.username}
+                  </p>
+                </div>
+
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => handleViewProfile(friend.username)}
+                  >
+                    <Search className="h-4 w-4" />
+                  </Button>
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive"
+                    onClick={() => handleRemoveFriend(friend.friendshipId)}
+                  >
+                    <UserX className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="p-8 text-center text-muted-foreground">
+            Пока нет друзей
+          </div>
+        )}
+
+        <div className="px-4 pt-8 pb-3">
+          <h2 className="font-semibold">
+            Запросы в друзья ({filteredRequests.length})
+          </h2>
+        </div>
+
+        {filteredRequests.length > 0 ? (
+          <div className="divide-y">
+            {filteredRequests.map((request) => (
+              <div
+                key={request.friendshipId}
+                className="flex items-center p-4 hover:bg-secondary transition-colors"
+              >
+                <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-pink-300 to-purple-400 flex items-center justify-center text-white font-bold">
+                  {request.avatar ? (
+                    <img
+                      src={request.avatar}
                       alt={request.name}
                       className="w-full h-full object-cover"
                     />
-                  </div>
-
-                  <div className="ml-3 flex-1">
-                    <div className="flex justify-between">
-                      <div>
-                        <span className="font-medium">{request.name}</span>
-                        <p className="text-sm text-muted-foreground">@{request.username}</p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-destructive border-destructive"
-                          onClick={() => handleRejectRequest(request.username)}
-                        >
-                          Отклонить
-                        </Button>
-                        <Button size="sm" className="bg-primary" onClick={() => handleAcceptRequest(request.username)}>
-                          Принять
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
+                  ) : (
+                    request.name.charAt(0).toUpperCase()
+                  )}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">
-              Запросов в друзья нет
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+
+                <div className="ml-3 flex-1">
+                  <div className="font-medium">{request.name}</div>
+                  <p className="text-sm text-muted-foreground">
+                    @{request.username}
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive border-destructive"
+                    onClick={() =>
+                      handleRejectRequest(request.friendshipId)
+                    }
+                  >
+                    Отклонить
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      handleAcceptRequest(request.friendshipId)
+                    }
+                  >
+                    Принять
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="p-8 text-center text-muted-foreground">
+            Запросов в друзья нет
+          </div>
+        )}
+      </div>
     </div>
   )
 }
-
