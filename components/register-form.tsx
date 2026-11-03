@@ -23,6 +23,9 @@ export function RegisterForm() {
     e.preventDefault()
     setError("")
 
+    const normalizedEmail = email.trim().toLowerCase()
+    const normalizedUsername = username.trim().toLowerCase()
+
     if (password !== confirm) {
       setError("Пароли не совпадают")
       return
@@ -33,8 +36,13 @@ export function RegisterForm() {
       return
     }
 
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+    if (!/^[a-zA-Z0-9_]+$/.test(normalizedUsername)) {
       setError("Никнейм может содержать только латинские буквы, цифры и _")
+      return
+    }
+
+    if (normalizedUsername.length < 3) {
+      setError("Никнейм должен содержать минимум 3 символа")
       return
     }
 
@@ -42,13 +50,31 @@ export function RegisterForm() {
 
     const supabase = createClient()
 
-    const { error } = await supabase.auth.signUp({
-      email,
+    const { data: existingProfile, error: profileCheckError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("username", normalizedUsername)
+      .maybeSingle()
+
+    if (profileCheckError) {
+      setLoading(false)
+      setError("Не удалось проверить доступность никнейма")
+      return
+    }
+
+    if (existingProfile) {
+      setLoading(false)
+      setError("Этот никнейм уже занят")
+      return
+    }
+
+    const { error: signUpError } = await supabase.auth.signUp({
+      email: normalizedEmail,
       password,
       options: {
         data: {
-          username,
-          name: username,
+          username: normalizedUsername,
+          name: normalizedUsername,
           description: "Мой профиль на it's.me",
         },
       },
@@ -56,8 +82,15 @@ export function RegisterForm() {
 
     setLoading(false)
 
-    if (error) {
-      setError(error.message)
+    if (signUpError) {
+      if (
+        signUpError.message.toLowerCase().includes("username") ||
+        signUpError.message.toLowerCase().includes("duplicate")
+      ) {
+        setError("Этот никнейм уже занят")
+      } else {
+        setError(signUpError.message)
+      }
       return
     }
 
