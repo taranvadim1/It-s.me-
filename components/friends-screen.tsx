@@ -1,4 +1,3 @@
-"use client"
 
 import { useEffect, useState } from "react"
 import { Input } from "@/components/ui/input"
@@ -6,6 +5,16 @@ import { Search, UserX } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
+
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface Profile {
   id: string
@@ -42,6 +51,9 @@ export function FriendsScreen() {
   const [friends, setFriends] = useState<FriendItem[]>([])
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([])
   const [loading, setLoading] = useState(true)
+
+  const [friendToRemove, setFriendToRemove] = useState<FriendItem | null>(null)
+  const [removingFriend, setRemovingFriend] = useState(false)
 
   const loadFriendsData = async () => {
     setLoading(true)
@@ -167,18 +179,39 @@ export function FriendsScreen() {
   }
 
   const handleRemoveFriend = async (friendshipId: string) => {
-    const { error } = await supabase
-      .from("friendships")
-      .delete()
-      .eq("id", friendshipId)
+    setRemovingFriend(true)
 
-    if (error) {
+    try {
+      const { error } = await supabase
+        .from("friendships")
+        .delete()
+        .eq("id", friendshipId)
+
+      if (error) {
+        console.error("Ошибка удаления друга:", error)
+        alert(`Не удалось удалить друга: ${error.message}`)
+        return false
+      }
+
+      await loadFriendsData()
+      return true
+    } catch (error) {
       console.error("Ошибка удаления друга:", error)
-      alert(`Не удалось удалить друга: ${error.message}`)
-      return
+      alert("Не удалось удалить друга. Проверьте подключение к интернету.")
+      return false
+    } finally {
+      setRemovingFriend(false)
     }
+  }
 
-    await loadFriendsData()
+  const confirmRemoveFriend = async () => {
+    if (!friendToRemove || removingFriend) return
+
+    const removed = await handleRemoveFriend(friendToRemove.friendshipId)
+
+    if (removed) {
+      setFriendToRemove(null)
+    }
   }
 
   const handleAcceptRequest = async (friendshipId: string) => {
@@ -299,7 +332,7 @@ export function FriendsScreen() {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 text-destructive"
-                    onClick={() => handleRemoveFriend(friend.friendshipId)}
+                    onClick={() => setFriendToRemove(friend)}
                   >
                     <UserX className="h-4 w-4" />
                   </Button>
@@ -375,6 +408,57 @@ export function FriendsScreen() {
           </div>
         )}
       </div>
+
+      <AlertDialog
+        open={!!friendToRemove}
+        onOpenChange={(open) => {
+          if (!open && !removingFriend) {
+            setFriendToRemove(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-[360px] rounded-2xl border-border bg-background p-6 shadow-2xl">
+          <AlertDialogHeader className="items-center text-center">
+            <div className="mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-destructive/10">
+              <UserX className="h-7 w-7 text-destructive" />
+            </div>
+
+            <AlertDialogTitle className="text-xl font-semibold">
+              Удалить из друзей?
+            </AlertDialogTitle>
+
+            <AlertDialogDescription className="text-center leading-relaxed">
+              Вы действительно хотите удалить пользователя{" "}
+              <span className="font-semibold text-foreground">
+                {friendToRemove?.name}
+              </span>{" "}
+              из списка друзей?
+              <span className="mt-2 block text-xs">
+                Чтобы восстановить дружбу, потребуется отправить новую заявку.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter className="mt-2 flex-col-reverse gap-2 sm:flex-row sm:gap-2">
+            <AlertDialogCancel
+              disabled={removingFriend}
+              className="mt-0 w-full rounded-xl sm:w-1/2"
+            >
+              Отмена
+            </AlertDialogCancel>
+
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={removingFriend}
+              onClick={confirmRemoveFriend}
+              className="w-full rounded-xl sm:w-1/2"
+            >
+              {removingFriend ? "Удаление..." : "Удалить"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
